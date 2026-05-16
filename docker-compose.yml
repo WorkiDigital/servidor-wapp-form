@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: trackserver-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+    networks:
+      - trackserver-network
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: trackserver-api
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:postgres_secure_pass@postgres:5432/trackserver?schema=public
+      - REDIS_URL=redis://redis:6379/0
+      - ENCRYPTION_KEY=00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      - JWT_SECRET=super_secret_jwt_key_change_me
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - trackserver-network
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    container_name: trackserver-worker
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres_secure_pass@postgres:5432/trackserver?schema=public
+      - REDIS_URL=redis://redis:6379/0
+      - ENCRYPTION_KEY=00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - trackserver-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: trackserver-redis
+    restart: always
+    command: redis-server --appendonly yes --requirepass redis_secure_pass
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - trackserver-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: trackserver-postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres_secure_pass
+      - POSTGRES_DB=trackserver
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - trackserver-network
+
+  loki:
+    image: grafana/loki:latest
+    container_name: trackserver-loki
+    restart: always
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - trackserver-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: trackserver-grafana
+    restart: always
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin_secure_pass
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - loki
+    networks:
+      - trackserver-network
+
+volumes:
+  redis-data:
+  postgres-data:
+  grafana-storage:
+
+networks:
+  trackserver-network:
+    driver: bridge
