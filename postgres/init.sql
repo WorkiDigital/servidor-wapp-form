@@ -57,7 +57,9 @@ CREATE INDEX IF NOT EXISTS idx_clients_source_slug ON clients(source_slug);
 CREATE INDEX IF NOT EXISTS idx_clients_tracking_domain ON clients(tracking_domain);
 CREATE INDEX IF NOT EXISTS idx_clients_external_ref ON clients(external_ref);
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_clients_source_id_not_null ON clients(source_id) WHERE source_id IS NOT NULL;
+DROP INDEX IF EXISTS uniq_clients_source_id_not_null;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_clients_workspace_source_not_null ON clients(workspace_id, source_id) WHERE workspace_id IS NOT NULL AND source_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_clients_source_id_without_workspace ON clients(source_id) WHERE workspace_id IS NULL AND source_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_clients_tracking_domain_not_null ON clients(tracking_domain) WHERE tracking_domain IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_clients_external_ref_workspace_not_null ON clients(workspace_id, external_ref) WHERE workspace_id IS NOT NULL AND external_ref IS NOT NULL;
 
