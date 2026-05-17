@@ -35,7 +35,8 @@ function normalizeSubdomain(value?: string) {
   return String(value || '')
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')</n    .replace(/^-+|-+$/g, '')
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/^-+|-+$/g, '')
     .replace(/-+/g, '-');
 }
 
@@ -117,23 +118,34 @@ export default async function adminRoutes(fastify: FastifyInstance, _options: Fa
     const subdomain = normalizeSubdomain(body.subdomain || body.source_slug || trackingDomain.split('.')[0]);
 
     if (!body.pixel_id || !body.access_token) {
-      return reply.status(400).send({
-        error: 'Bad Request',
-        message: 'pixel_id and access_token are required fields',
-      });
+      return reply.status(400).send({ error: 'Bad Request', message: 'pixel_id and access_token are required fields' });
     }
 
     if (!trackingDomain && !subdomain && !body.source_id) {
-      return reply.status(400).send({
-        error: 'Bad Request',
-        message: 'tracking_domain, subdomain, or source_id is required',
-      });
+      return reply.status(400).send({ error: 'Bad Request', message: 'tracking_domain, subdomain, or source_id is required' });
     }
 
     try {
       const encryptedToken = encrypt(body.access_token);
       const existingId = await findExistingClient(body);
       const metadata = JSON.stringify(body.metadata || {});
+
+      const values = [
+        body.workspace_id || null,
+        body.source_id || null,
+        body.source_type || 'custom',
+        body.source_slug || null,
+        trackingDomain || null,
+        subdomain || null,
+        body.external_ref || null,
+        body.pixel_id,
+        encryptedToken,
+        body.test_event_code || null,
+        body.status || 'active',
+        body.dns_status || 'pending',
+        body.ssl_status || 'pending',
+        metadata,
+      ];
 
       if (existingId) {
         const res = await query(
@@ -155,32 +167,11 @@ export default async function adminRoutes(fastify: FastifyInstance, _options: Fa
                metadata = $14
            WHERE id = $15
            RETURNING id, workspace_id, source_id, source_type, source_slug, tracking_domain, subdomain, external_ref, pixel_id, test_event_code, status, dns_status, ssl_status, created_at, updated_at`,
-          [
-            body.workspace_id || null,
-            body.source_id || null,
-            body.source_type || 'custom',
-            body.source_slug || null,
-            trackingDomain || null,
-            subdomain || null,
-            body.external_ref || null,
-            body.pixel_id,
-            encryptedToken,
-            body.test_event_code || null,
-            body.status || 'active',
-            body.dns_status || 'pending',
-            body.ssl_status || 'pending',
-            metadata,
-            existingId,
-          ]
+          [...values, existingId]
         );
 
         const client = res.rows[0];
-        return reply.status(200).send({
-          success: true,
-          message: 'Client updated successfully',
-          client,
-          dns_instruction: buildDnsInstruction(client),
-        });
+        return reply.status(200).send({ success: true, message: 'Client updated successfully', client, dns_instruction: buildDnsInstruction(client) });
       }
 
       const res = await query(
@@ -189,31 +180,11 @@ export default async function adminRoutes(fastify: FastifyInstance, _options: Fa
           pixel_id, access_token, test_event_code, status, dns_status, ssl_status, metadata
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING id, workspace_id, source_id, source_type, source_slug, tracking_domain, subdomain, external_ref, pixel_id, test_event_code, status, dns_status, ssl_status, created_at, updated_at`,
-        [
-          body.workspace_id || null,
-          body.source_id || null,
-          body.source_type || 'custom',
-          body.source_slug || null,
-          trackingDomain || null,
-          subdomain || null,
-          body.external_ref || null,
-          body.pixel_id,
-          encryptedToken,
-          body.test_event_code || null,
-          body.status || 'active',
-          body.dns_status || 'pending',
-          body.ssl_status || 'pending',
-          metadata,
-        ]
+        values
       );
 
       const client = res.rows[0];
-      return reply.status(201).send({
-        success: true,
-        message: 'Client onboarded successfully',
-        client,
-        dns_instruction: buildDnsInstruction(client),
-      });
+      return reply.status(201).send({ success: true, message: 'Client onboarded successfully', client, dns_instruction: buildDnsInstruction(client) });
     } catch (err: any) {
       if (err.code === '23505') {
         return reply.status(409).send({ error: 'Conflict', message: 'Client identifier already registered' });
@@ -291,10 +262,7 @@ export default async function adminRoutes(fastify: FastifyInstance, _options: Fa
       `);
 
       return reply.status(200).send({
-        clients: res.rows.map((row: any) => ({
-          ...row,
-          total_events_sent: parseInt(row.total_events_sent, 10),
-        })),
+        clients: res.rows.map((row: any) => ({ ...row, total_events_sent: parseInt(row.total_events_sent, 10) })),
       });
     } catch (err) {
       fastify.log.error(err, 'Error listing clients');
