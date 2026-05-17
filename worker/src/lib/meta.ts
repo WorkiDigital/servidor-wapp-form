@@ -2,65 +2,71 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Definição da interface do payload individual de evento da Meta CAPI
+export interface MetaUserData {
+  em?: string[];
+  ph?: string[];
+  fn?: string[];
+  ln?: string[];
+  ct?: string[];
+  st?: string[];
+  country?: string[];
+  zp?: string[];
+  external_id?: string[];
+  client_ip_address?: string;
+  client_user_agent?: string;
+  fbp?: string;
+  fbc?: string | null;
+}
+
 export interface MetaEvent {
   event_name: string;
   event_time: number;
   event_id: string;
-  event_source: string;
   action_source: string;
-  user_data: {
-    em?: string[]; // email hash SHA-256
-    ph?: string[]; // phone hash SHA-256
-    client_ip_address?: string;
-    client_user_agent?: string;
-    fbp?: string;
-    fbc?: string | null;
-  };
+  event_source_url?: string;
+  user_data: MetaUserData;
   custom_data?: Record<string, any>;
 }
 
-// Interface de entrada que vem do Redis
 export interface QueueEvent {
   client_id: string;
+  workspace_id?: string;
+  source_id?: string;
+  source_type?: string;
   pixel_id: string;
+  test_event_code?: string;
   event_name: string;
   event_id: string;
-  email?: string;
-  phone?: string;
-  fbp?: string;
-  fbc?: string | null;
-  custom_data?: Record<string, any>;
-  ip?: string;
-  user_agent?: string;
   event_time: number;
+  event_source_url?: string;
+  action_source?: string;
+  user_data: MetaUserData;
+  custom_data?: Record<string, any>;
+  metadata?: Record<string, any>;
 }
 
-/**
- * Envia um lote de eventos para o Facebook Conversions API.
- * Suporta retry com backoff exponencial.
- */
 export async function sendBatchToMeta(
   pixelId: string,
   accessToken: string,
   events: MetaEvent[],
+  testEventCode?: string | null,
   maxRetries = 3
 ): Promise<{ success: boolean; response: any; status: number }> {
-  const url = `https://graph.facebook.com/v19.0/${pixelId}/events?access_token=${accessToken}`;
+  const version = process.env.META_API_VERSION || 'v22.0';
+  const url = `https://graph.facebook.com/${version}/${pixelId}/events?access_token=${accessToken}`;
   const payload = {
     data: events,
+    ...(testEventCode ? { test_event_code: testEventCode } : {}),
   };
 
   let attempt = 0;
-  let delay = 1000; // 1s inicial
+  let delay = 1000;
 
   while (attempt <= maxRetries) {
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
@@ -71,29 +77,27 @@ export async function sendBatchToMeta(
         return { success: true, response: resData, status };
       }
 
-      // Se for 429 (Rate Limit) ou 5xx (Erro no servidor da Meta), tentamos novamente
       if (status === 429 || (status >= 500 && status < 600)) {
-        attempt++;
+        attempt += 1;
         if (attempt <= maxRetries) {
           console.warn(`[META CAPI] Tentativa ${attempt} falhou com status ${status}. Retentando em ${delay}ms...`);
           await new Promise((resolve) => setTimeout(resolve, delay));
-          delay *= 2; // Dobra o delay (1s, 2s, 4s...)
+          delay *= 2;
           continue;
         }
       }
 
-      // Erros de cliente (400, 401, 403, etc.) não sofrem retry pois a requisição está inválida
       return { success: false, response: resData, status };
     } catch (err: any) {
-      attempt++;
+      attempt += 1;
       console.error(`[META CAPI] Erro de rede na tentativa ${attempt}: ${err.message}`);
-      
+
       if (attempt <= maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, delay));
         delay *= 2;
         continue;
       }
-      
+
       return { success: false, response: { error: err.message }, status: 0 };
     }
   }
